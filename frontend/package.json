@@ -9,9 +9,9 @@
     "build": "tsc --project tsconfig.app.json && vite build",
     "build:spatial": "XR_ENV=avp tsc --project tsconfig.app.json && XR_ENV=avp vite build",
     "preview": "vite preview",
-    "spatial:run": "npx webspatial-builder run --base=http://localhost:5173/webspatial/avp",
+    "spatial:run": "webspatial-builder run --base=http://localhost:5173/webspatial/avp/",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --project tsconfig.app.json --noEmit"
   },
   "dependencies": {
     "@webspatial/core-sdk": "^1.1.0",

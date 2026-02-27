@@ -41,7 +41,11 @@
       "Bash(cd /c/Users/ASUS/Desktop/memorybridge/frontend && npx vite build 2>&1)",
       "Bash(head:*)",
       "Bash(grep:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:registry.npmjs.org)",
+      "Bash(ls:*)",
+      "Bash(npm run:*)"
     ]
   }
 }

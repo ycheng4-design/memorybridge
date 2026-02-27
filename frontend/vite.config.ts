@@ -11,8 +11,12 @@ const XR_ENV = process.env.XR_ENV ?? ''
 export default defineConfig({
   plugins: [
     react({
-      // jsxImportSource is configured in tsconfig.app.json to @webspatial/react-sdk
-      // so that WebSpatial's JSX transform processes spatial attributes.
+      // Explicitly align Babel (dev) jsxImportSource with the esbuild (prod) config
+      // set by @webspatial/vite-plugin — avp mode uses the full spatial runtime,
+      // browser mode uses the web-only stub.
+      jsxImportSource: XR_ENV === 'avp'
+        ? '@webspatial/react-sdk/default'
+        : '@webspatial/react-sdk/web',
     }),
     // WebSpatial plugin — injects __XR_ENV_BASE__ global, handles manifest, etc.
     webSpatial(),
@@ -32,6 +36,9 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    // Bind to all interfaces so the visionOS simulator on the Mac mini
+    // can reach the dev server over the network (e.g. via the machine's LAN IP).
+    host: '0.0.0.0',
     proxy: {
       '/api': {
         target: process.env.VITE_API_URL ?? 'http://localhost:5000',

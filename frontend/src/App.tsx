@@ -17,8 +17,6 @@ const SpatialMemoryRoom = lazy(
   () => import('@/components/spatial/SpatialMemoryRoom')
 )
 
-declare const __XR_ENV_BASE__: string
-
 // Full-screen skeleton fallback for lazy-loaded spatial room
 function SpatialLoadingFallback() {
   return (
