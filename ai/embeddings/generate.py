@@ -245,7 +245,8 @@ async def _store_embedding(
         .document(str(caption_index))
     )
     # Run blocking Firestore call in thread pool to keep the event loop free.
-    await asyncio.get_event_loop().run_in_executor(
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(
         None,
         lambda: doc_ref.set(
             {
@@ -271,7 +272,8 @@ async def _store_graph(memory_id: str, edges: list[dict]) -> None:
     doc_ref = (
         db.collection("memories").document(memory_id).collection("graph").document("edges")
     )
-    await asyncio.get_event_loop().run_in_executor(
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(
         None,
         lambda: doc_ref.set({"edges": edges}),
     )
@@ -279,9 +281,11 @@ async def _store_graph(memory_id: str, edges: list[dict]) -> None:
 
 
 async def _fetch_captions(memory_id: str) -> list[str]:
-    """Retrieve photo captions from the Firestore memory document.
+    """Retrieve photo captions from the Firestore photos subcollection.
 
-    Expects: memories/{memory_id}.photos — a list of maps with a "caption" field.
+    Reads: memories/{memory_id}/photos — a subcollection of photo documents
+    written by firebase_service.save_memory_to_firestore(). The parent memory
+    document does NOT contain a photos array.
 
     Args:
         memory_id: Firestore memory document ID.
@@ -290,11 +294,10 @@ async def _fetch_captions(memory_id: str) -> list[str]:
         Ordered list of caption strings.
     """
     db = _get_firestore_client()
-    doc_ref = db.collection("memories").document(memory_id)
-    snap = await asyncio.get_event_loop().run_in_executor(None, doc_ref.get)
-    data: dict = snap.to_dict() or {}
-    photos: list[dict] = data.get("photos", [])
-    captions = [p.get("caption", "") for p in photos]
+    loop = asyncio.get_running_loop()
+    photos_ref = db.collection("memories").document(memory_id).collection("photos")
+    photo_docs = await loop.run_in_executor(None, lambda: list(photos_ref.stream()))
+    captions = [doc.to_dict().get("caption", "") for doc in photo_docs]
     logger.info(
         "Fetched %d captions for memory=%s.", len(captions), memory_id
     )

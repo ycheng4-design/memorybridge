@@ -113,7 +113,9 @@ function toPhotoMeta(docSnap: { id: string; data: () => unknown }): PhotoMeta | 
   return {
     id: docSnap.id,
     url: raw['url'] as string,
-    storagePath: (raw['storagePath'] as string) ?? '', // backend does not write storagePath
+    // Firestore stores 'url' (signed URL); use it as storagePath fallback so
+    // images load correctly when read via real-time listener (no storagePath field).
+    storagePath: (raw['storagePath'] as string) || (raw['url'] as string) || '',
     caption: raw['caption'] as string,
     date: (raw['date'] as string) ?? '',
     era: raw['era'] as PhotoMeta['era'],
@@ -197,8 +199,8 @@ export function subscribeToMemoryStatus(
         id: snap.id,
         personName: (raw['person_name'] as string) ?? '',
         voiceCloneId: raw['voice_id'] as string | undefined,
-        agentId: undefined,
-        embeddingReady: false,
+        agentId: raw['agent_id'] as string | undefined,
+        embeddingReady: raw['status'] === 'ready',
         status: (raw['status'] as 'processing' | 'ready' | 'error') ?? 'processing',
         photoCount: (raw['photo_count'] as number) ?? 0,
         createdAt: (raw['created_at'] as string) ?? '',

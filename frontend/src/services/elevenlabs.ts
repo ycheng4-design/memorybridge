@@ -267,35 +267,45 @@ export function onAgentResponse(
 // ============================================================
 
 /**
- * Send a photo memory as contextual grounding to the active agent session.
+ * Send a photo memory as contextual grounding to the agent session.
  *
- * Formats the Memory into a natural-language context string and dispatches
- * it as a CustomEvent on the widget element. If no widget is mounted the
- * call is silently dropped.
+ * The ElevenLabs web widget does not support arbitrary mid-session context
+ * injection via custom events. The correct approach is to reinitialize the
+ * widget with the photo context embedded in the agent's opening `firstMessage`
+ * override. This starts a fresh session focused on the selected photo.
  *
  * @param photoMemory - The Memory currently selected by the user.
  */
 export async function sendPhotoContext(photoMemory: Memory): Promise<void> {
-  if (!activeWidget) {
-    console.warn('[MemoryBridge] sendPhotoContext: no active widget mounted')
+  const agentId = activeWidget?.getAttribute('agent-id')
+  if (!agentId) {
+    console.warn('[MemoryBridge] sendPhotoContext: no active widget or agent-id missing')
     return
   }
 
-  const context = buildPhotoContextMessage(photoMemory)
+  const firstMessage = buildPhotoContextMessage(photoMemory)
 
-  // ElevenLabs widget accepts context injection via this custom event
-  const event = new CustomEvent('elevenlabs-convai:inject_context', {
-    detail: { context },
-    bubbles: true,
+  // Reinitialize the widget with the photo context as the agent's opening message.
+  // This creates a fresh session where the agent opens with awareness of the photo.
+  await initElevenLabsWidget({
+    agentId,
+    overrides: {
+      agent: {
+        firstMessage,
+      },
+    },
   })
-  activeWidget.dispatchEvent(event)
 }
 
 /**
- * Send a generic context string to the ElevenLabs agent.
- * Legacy alias — prefer sendPhotoContext for typed Memory objects.
+ * Send a generic context string to the ElevenLabs agent by priming the
+ * agent's opening message override.
  *
- * @param context - Raw context string to inject.
+ * Context is injected at session start via the `override.agent.firstMessage`
+ * attribute — the ElevenLabs widget does not support mid-session context
+ * injection via custom events.
+ *
+ * @param context - Raw context string to embed in the agent's first message.
  */
 export function sendAgentContext(context: string): void {
   if (!activeWidget) {
@@ -303,11 +313,19 @@ export function sendAgentContext(context: string): void {
     return
   }
 
-  const event = new CustomEvent('elevenlabs-convai:inject_context', {
-    detail: { context },
-    bubbles: true,
-  })
-  activeWidget.dispatchEvent(event)
+  // Set the override attribute so the NEXT session starts with this context.
+  // This is a best-effort primer; it does not interrupt an active call.
+  const currentOverride = activeWidget.getAttribute('override')
+  let overrideObj: Record<string, unknown> = {}
+  try {
+    if (currentOverride) overrideObj = JSON.parse(currentOverride) as Record<string, unknown>
+  } catch {
+    // ignore malformed override
+  }
+
+  const agentOverride = (overrideObj.agent as Record<string, unknown> | undefined) ?? {}
+  overrideObj.agent = { ...agentOverride, firstMessage: context }
+  activeWidget.setAttribute('override', JSON.stringify(overrideObj))
 }
 
 // ============================================================

@@ -103,14 +103,15 @@ export function useVoiceAgent({
         isListening: false,
       }))
 
-      await initElevenLabsWidget({ agentId })
-      attachWidgetListeners()
-
-      // Subscribe to status updates
+      // Subscribe to status and attach listeners BEFORE widget init
+      // to avoid missing the call_started event on fast connections.
       if (unsubscribeRef.current) {
         unsubscribeRef.current()
       }
       unsubscribeRef.current = onAgentStatusChange(handleStatusChange)
+      attachWidgetListeners()
+
+      await initElevenLabsWidget({ agentId })
 
       // Prime the agent with memory context
       if (photos.length > 0) {
@@ -122,8 +123,8 @@ export function useVoiceAgent({
           eras,
           sampleCaptions,
         })
-        // Small delay to let widget initialize
-        setTimeout(() => sendAgentContext(context), 1500)
+        // Delay to let widget fully initialize and WebRTC handshake complete
+        setTimeout(() => sendAgentContext(context), 3000)
       }
 
       isInitializedRef.current = true

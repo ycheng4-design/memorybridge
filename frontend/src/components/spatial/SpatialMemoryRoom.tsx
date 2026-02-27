@@ -220,13 +220,8 @@ export default function SpatialMemoryRoom() {
   }, [])
 
   // Firestore real-time subscription via existing hook
-  const { photos, grouped, isLoading, error, memoryStatus, photoCount } =
+  const { photos, grouped, isLoading, error, memoryStatus, photoCount, personName } =
     useMemories(memoryId ?? null)
-
-  // Person name derived from memory status — hook exposes it via status doc
-  // We'll use a generic label since `personName` lives in the memory doc
-  // and we don't have a usePerson hook yet. The MemoryOrb shows the first initial.
-  const personName = 'Memory'  // Will be overridden by actual data in full build
 
   // Paginated photos — max 12 at a time
   const allPhotos: PhotoMeta[] = useMemo(() => {

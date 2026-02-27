@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import IO, List, Optional
 
 import firebase_admin
@@ -77,6 +77,9 @@ def _bucket() -> storage.Bucket:
 # Storage helpers                                                      #
 # ------------------------------------------------------------------ #
 
+_SIGNED_URL_EXPIRY_HOURS: int = 24
+
+
 def upload_file_to_storage(
     file_obj: IO[bytes],
     destination_path: str,
@@ -84,20 +87,39 @@ def upload_file_to_storage(
 ) -> str:
     """Upload a binary file-like object to Firebase Storage.
 
+    Returns a signed URL valid for 24 hours.
+
     Args:
         file_obj: A readable binary stream (e.g. Werkzeug FileStorage).
         destination_path: Path within the bucket, e.g. 'memories/{id}/photo.jpg'.
         content_type: MIME type of the file.
 
     Returns:
-        Public download URL for the uploaded object.
+        Signed download URL (24 h).
+
+    Raises:
+        Exception: If signed URL generation fails (e.g. missing IAM permissions).
     """
     bucket = _bucket()
     blob = bucket.blob(destination_path)
     blob.upload_from_file(file_obj, content_type=content_type)
-    blob.make_public()
-    logger.info("Uploaded file to Storage: %s", destination_path)
-    return blob.public_url
+
+    try:
+        url = blob.generate_signed_url(
+            expiration=timedelta(hours=_SIGNED_URL_EXPIRY_HOURS),
+            method="GET",
+            version="v4",
+        )
+        logger.info("Uploaded file to Storage (signed URL): %s", destination_path)
+        return url
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "Could not generate signed URL for %s: %s. "
+            "Ensure the service account has roles/iam.serviceAccountTokenCreator.",
+            destination_path,
+            exc,
+        )
+        raise
 
 
 # ------------------------------------------------------------------ #
@@ -128,6 +150,8 @@ def save_memory_to_firestore(
             "created_at": now,
             "status": "processing",
             "voice_id": None,
+            "kb_id": None,
+            "agent_id": None,
             "voice_storage_path": voice_storage_path,
         }
     )
@@ -138,6 +162,7 @@ def save_memory_to_firestore(
         photos_ref.document(photo_id).set(
             {
                 "url": photo["url"],
+                "storage_path": photo.get("storage_path", ""),
                 "caption": photo["caption"],
                 "date": photo.get("date", ""),
                 "era": photo.get("era", "recent"),
@@ -176,6 +201,7 @@ def get_memory_from_firestore(memory_id: str) -> Optional[dict]:
         "created_at": data.get("created_at").isoformat() if data.get("created_at") else "",
         "status": data.get("status", "processing"),
         "voice_id": data.get("voice_id"),
+        "agent_id": data.get("agent_id"),
         "embedding_ready": all_embedded,
         "photos": photos,
     }
@@ -199,13 +225,23 @@ def get_all_photos_for_memory(memory_id: str) -> List[dict]:
     result: List[dict] = []
     for doc in docs:
         photo_data = doc.to_dict()
+        url = photo_data.get("url", "")
         result.append(
             {
+                # id is the canonical field name for frontend (PhotoMeta.id)
+                "id": doc.id,
+                # photo_id kept for backward compatibility
                 "photo_id": doc.id,
-                "url": photo_data.get("url", ""),
+                "url": url,
+                # storagePath = signed URL for direct browser access
+                "storagePath": url,
+                # storage_path = raw bucket path for future re-signing
+                "storage_path": photo_data.get("storage_path", ""),
                 "caption": photo_data.get("caption", ""),
                 "date": photo_data.get("date", ""),
                 "era": photo_data.get("era", "recent"),
+                # uploadedAt not stored separately; use empty string
+                "uploadedAt": "",
                 "embedding": photo_data.get("embedding"),
             }
         )
@@ -223,7 +259,7 @@ def update_photo_embedding(
     Args:
         memory_id: Parent memory document UUID.
         photo_id: Photo document ID within the subcollection.
-        embedding: 1024-dimensional float vector.
+        embedding: 384-dimensional float vector.
     """
     db = _db()
     photo_ref = (
@@ -258,6 +294,30 @@ def update_memory_voice_id(memory_id: str, voice_id: str) -> None:
     db = _db()
     db.collection("memories").document(memory_id).update({"voice_id": voice_id})
     logger.info("Memory %s voice_id set to '%s'.", memory_id, voice_id)
+
+
+def update_memory_agent_id(memory_id: str, agent_id: str) -> None:
+    """Persist an ElevenLabs agent_id onto the memory document.
+
+    Args:
+        memory_id: UUID of the memory document.
+        agent_id: ElevenLabs conversational agent identifier.
+    """
+    db = _db()
+    db.collection("memories").document(memory_id).update({"agent_id": agent_id})
+    logger.info("Memory %s agent_id set to '%s'.", memory_id, agent_id)
+
+
+def update_memory_kb_id(memory_id: str, kb_id: str) -> None:
+    """Persist an ElevenLabs knowledge base ID onto the memory document.
+
+    Args:
+        memory_id: UUID of the memory document.
+        kb_id: ElevenLabs knowledge base document identifier.
+    """
+    db = _db()
+    db.collection("memories").document(memory_id).update({"kb_id": kb_id})
+    logger.info("Memory %s kb_id set to '%s'.", memory_id, kb_id)
 
 
 def list_memories_from_firestore(limit: int = 20, offset: int = 0) -> List[dict]:

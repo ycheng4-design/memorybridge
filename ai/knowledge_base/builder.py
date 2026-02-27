@@ -52,7 +52,10 @@ _MAX_KB: int = 50
 _MAX_CHARS: int = _MAX_KB * 1024  # 51_200 characters
 
 # Mapping from era code (used in Firestore) to human-readable section header.
+# Supports both decade codes ("1940s") and life-stage codes ("childhood")
+# because _infer_era() in upload.py writes life-stage codes.
 ERA_LABELS: dict[str, str] = {
+    # decade codes (original design)
     "1940s": "Childhood (1940s-1960s)",
     "1950s": "Childhood (1940s-1960s)",
     "1960s": "Childhood (1940s-1960s)",
@@ -62,6 +65,11 @@ ERA_LABELS: dict[str, str] = {
     "2000s": "Career & Later Life (2000s-2010s)",
     "2010s": "Career & Later Life (2000s-2010s)",
     "2020s": "Recent Memories (2020s)",
+    # life-stage codes written by backend/_infer_era()
+    "childhood": "Childhood (1940s-1960s)",
+    "young-adult": "Young Adult Years",
+    "family": "Family Years (1970s-1990s)",
+    "recent": "Recent Memories (2020s)",
     "unknown": "Memories",
 }
 
@@ -305,7 +313,8 @@ def _firestore_photo_to_memory(photo: dict) -> PhotoMemory | None:
 async def build_from_firestore(memory_id: str, person_name: str) -> str:
     """Fetch photo memories from Firestore and build the knowledge base document.
 
-    Reads: memories/{memory_id}.photos — list of photo maps.
+    Reads: memories/{memory_id}/photos (subcollection), not the parent document.
+    Photos are stored as individual documents in the subcollection by firebase_service.
 
     Args:
         memory_id: Firestore memory document ID.
@@ -321,15 +330,16 @@ async def build_from_firestore(memory_id: str, person_name: str) -> str:
     )
 
     db = _get_firestore_client()
-    doc_ref = db.collection("memories").document(memory_id)
+    loop = asyncio.get_running_loop()
 
-    snap = await asyncio.get_event_loop().run_in_executor(None, doc_ref.get)
-    data: dict = snap.to_dict() or {}
-    photos: list[dict] = data.get("photos", [])
+    photos_ref = db.collection("memories").document(memory_id).collection("photos")
+    photo_docs = await loop.run_in_executor(None, lambda: list(photos_ref.stream()))
+    photos: list[dict] = [doc.to_dict() for doc in photo_docs]
 
     if not photos:
         logger.warning(
-            "No photos found for memory_id=%s — returning empty knowledge base.", memory_id
+            "No photos found in subcollection for memory_id=%s — returning empty knowledge base.",
+            memory_id,
         )
         return build_knowledge_base(person_name, [])
 

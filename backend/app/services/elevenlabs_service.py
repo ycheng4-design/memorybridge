@@ -279,7 +279,7 @@ async def upload_knowledge_base_document(
     async with httpx.AsyncClient(timeout=60.0) as client:
         response = await _post_with_retry(
             client,
-            f"{_BASE_URL}/convai/knowledge-base/text",
+            f"{_BASE_URL}/convai/knowledge-base/document",
             data={"name": name},
             files={"file": (f"{name}.md", encoded, "text/markdown")},
         )
@@ -334,7 +334,7 @@ async def create_conversational_agent(
             },
             "tts": {
                 "voice_id": voice_id,
-                "model_id": "eleven_turbo_v2",
+                "model_id": "eleven_turbo_v2_5",
                 "stability": 0.75,
                 "similarity_boost": 0.85,
             },
@@ -398,33 +398,18 @@ async def update_agent_voice(agent_id: str, voice_id: str) -> bool:
 
 
 async def get_agent_share_link(agent_id: str) -> str:
-    """Retrieve the public shareable widget URL for a conversational agent.
+    """Return the public shareable widget URL for a conversational agent.
 
-    The share link embeds the agent in an iframe / widget. This is the URL
-    used by the ElevenLabs JS widget snippet on the frontend.
+    The ElevenLabs Conversational AI widget is configured via the agent-id
+    attribute on <elevenlabs-convai>. The canonical embed URL is constructed
+    directly — no API call needed.
 
     Args:
         agent_id: ElevenLabs agent_id.
 
     Returns:
-        Shareable HTTPS URL string for the agent.
-
-    Raises:
-        httpx.HTTPStatusError: If the API returns an error.
+        Shareable HTTPS URL string for the agent widget.
     """
-    logger.info("Fetching share link for agent_id=%s.", agent_id)
-
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.get(
-            f"{_BASE_URL}/convai/agents/{agent_id}/link",
-            headers=_default_headers(),
-        )
-        response.raise_for_status()
-
-    data = response.json()
-    # ElevenLabs returns { "url": "https://..." } or embedded in agent details
-    share_url: str = data.get("url") or data.get("share_url") or (
-        f"https://elevenlabs.io/convai/agent/{agent_id}"
-    )
-    logger.info("Share link: %s", share_url)
+    share_url = f"https://elevenlabs.io/convai/agent/{agent_id}"
+    logger.info("Share link for agent_id=%s: %s", agent_id, share_url)
     return share_url

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
+import tempfile
 import threading
 import uuid
 from typing import List, Tuple
@@ -91,12 +92,17 @@ def handle_upload() -> Tuple[object, int]:
     memory_id = str(uuid.uuid4())
 
     try:
+        # Read voice bytes before uploading so we can pass them to the
+        # ElevenLabs provisioning thread without re-downloading from Storage.
+        voice_ext = _safe_ext(voice.filename or "", _ALLOWED_AUDIO_EXTS, ".mp3")
+        voice.stream.seek(0)
+        voice_bytes = voice.stream.read()
+        voice.stream.seek(0)
+
         # Upload voice file to Firebase Storage.
         # H-3: Use only the safe extension extracted from the original filename —
         # never embed the raw client-supplied filename in the storage path.
-        voice_ext = _safe_ext(voice.filename or "", _ALLOWED_AUDIO_EXTS, ".mp3")
         voice_path = f"memories/{memory_id}/voice/recording{voice_ext}"
-        voice.stream.seek(0)
         voice_url = firebase_service.upload_file_to_storage(
             file_obj=voice.stream,
             destination_path=voice_path,
@@ -120,6 +126,7 @@ def handle_upload() -> Tuple[object, int]:
                 {
                     "photo_id": photo_id,
                     "url": photo_url,
+                    "storage_path": photo_path,
                     "caption": caption.strip()[:_MAX_CAPTION_LEN],
                     "date": "",
                     "era": _infer_era(idx, len(photos)),
@@ -142,6 +149,9 @@ def handle_upload() -> Tuple[object, int]:
 
     # Queue async embedding job — runs in background thread, does NOT block response
     _queue_embedding_job(memory_id, photo_docs)
+
+    # Queue ElevenLabs provisioning: voice clone → KB → agent → update Firestore
+    _queue_elevenlabs_provisioning(memory_id, person_name, voice_bytes, voice_ext)
 
     return jsonify({"memory_id": memory_id, "status": "processing"}), 200
 
@@ -290,6 +300,144 @@ def _validate_audio_file(voice: FileStorage) -> str | None:
 
 
 # ------------------------------------------------------------------ #
+# ElevenLabs provisioning trigger                                      #
+# ------------------------------------------------------------------ #
+
+
+def _queue_elevenlabs_provisioning(
+    memory_id: str,
+    person_name: str,
+    voice_bytes: bytes,
+    voice_ext: str,
+) -> None:
+    """Spawn a background thread to run the ElevenLabs provisioning pipeline.
+
+    The pipeline (in order):
+    1. Save audio bytes to a local temp file
+    2. Create an ElevenLabs Instant Voice Clone
+    3. Build knowledge base markdown from Firestore photo captions
+    4. Upload the knowledge base document to ElevenLabs
+    5. Create the conversational agent (wired to voice + KB)
+    6. Write voice_id, kb_id, agent_id back to Firestore
+
+    Skips gracefully if ELEVENLABS_API_KEY is not set.
+
+    Args:
+        memory_id: UUID of the memory document.
+        person_name: Display name of the person (used as voice/agent label).
+        voice_bytes: Raw audio bytes of the voice recording.
+        voice_ext: File extension including dot (e.g. '.wav', '.mp3').
+    """
+    if not os.environ.get("ELEVENLABS_API_KEY"):
+        logger.info(
+            "ELEVENLABS_API_KEY not set — skipping ElevenLabs provisioning for memory %s.",
+            memory_id,
+        )
+        return
+
+    def _worker() -> None:
+        import asyncio
+
+        logger.info(
+            "ElevenLabs provisioning thread started for memory %s.", memory_id
+        )
+        tmp_path: str | None = None
+
+        try:
+            # Save audio bytes to a named temp file so elevenlabs_service can open it
+            with tempfile.NamedTemporaryFile(
+                suffix=voice_ext, delete=False, prefix=f"el_voice_{memory_id[:8]}_"
+            ) as tmp:
+                tmp.write(voice_bytes)
+                tmp_path = tmp.name
+
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                loop.run_until_complete(
+                    _run_elevenlabs_provisioning(memory_id, person_name, tmp_path)
+                )
+            finally:
+                loop.close()
+
+        except Exception as exc:  # noqa: BLE001
+            logger.exception(
+                "ElevenLabs provisioning failed for memory %s: %s", memory_id, exc
+            )
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+
+    thread = threading.Thread(
+        target=_worker, daemon=True, name=f"el-provision-{memory_id[:8]}"
+    )
+    thread.start()
+    logger.info("Queued ElevenLabs provisioning thread for memory %s.", memory_id)
+
+
+async def _run_elevenlabs_provisioning(
+    memory_id: str, person_name: str, audio_path: str
+) -> None:
+    """Async ElevenLabs provisioning pipeline.
+
+    Args:
+        memory_id: Firestore memory document UUID.
+        person_name: Display name for voice clone and agent labels.
+        audio_path: Absolute path to the temp audio file.
+    """
+    from ..services import elevenlabs_service
+    from ..services.firebase_service import (
+        update_memory_voice_id,
+        update_memory_kb_id,
+        update_memory_agent_id,
+    )
+    from ai.knowledge_base.builder import build_from_firestore
+
+    # Step 1 — Voice clone
+    logger.info("[EL Provision] Step 1: Creating voice clone for memory %s.", memory_id)
+    voice_result = await elevenlabs_service.create_voice_clone(audio_path, person_name)
+    update_memory_voice_id(memory_id, voice_result.voice_id)
+    logger.info("[EL Provision] Voice clone done: voice_id=%s.", voice_result.voice_id)
+
+    # Step 2 — Build knowledge base from Firestore photo captions
+    logger.info("[EL Provision] Step 2: Building knowledge base for memory %s.", memory_id)
+    kb_content = await build_from_firestore(memory_id, person_name)
+
+    # Step 3 — Upload knowledge base to ElevenLabs
+    logger.info("[EL Provision] Step 3: Uploading knowledge base for memory %s.", memory_id)
+    kb_id = await elevenlabs_service.upload_knowledge_base_document(
+        kb_content, f"{person_name} Life Memories"
+    )
+    update_memory_kb_id(memory_id, kb_id)
+    logger.info("[EL Provision] Knowledge base uploaded: kb_id=%s.", kb_id)
+
+    # Step 4 — Create conversational agent wired to voice + KB
+    logger.info("[EL Provision] Step 4: Creating conversational agent for memory %s.", memory_id)
+    agent_id = await elevenlabs_service.create_conversational_agent(
+        voice_result.voice_id, kb_id, person_name
+    )
+    update_memory_agent_id(memory_id, agent_id)
+    logger.info("[EL Provision] Agent created: agent_id=%s.", agent_id)
+
+    # Mark memory as ready so the frontend can load the voice widget.
+    # The embedding job (running in parallel) may also update this status.
+    # Setting "ready" here ensures voice-only demos work even if AMD
+    # embeddings are unconfigured or fail.
+    firebase_service.update_memory_status(memory_id, "ready")
+
+    logger.info(
+        "[EL Provision] Provisioning complete for memory %s: voice=%s kb=%s agent=%s.",
+        memory_id,
+        voice_result.voice_id,
+        kb_id,
+        agent_id,
+    )
+
+
+# ------------------------------------------------------------------ #
 # Async embedding trigger                                              #
 # ------------------------------------------------------------------ #
 
@@ -330,48 +478,44 @@ def _queue_embedding_job(memory_id: str, photo_docs: List[dict]) -> None:
 
 
 async def _run_embeddings(memory_id: str, photo_docs: List[dict]) -> None:
-    """Async implementation: download images and compute embeddings via AMD service.
+    """Generate text embeddings via AMD service and persist them.
+
+    The all-MiniLM-L6-v2 model is text-only — image bytes are not downloaded.
+    Falls back to local CPU automatically when AMD_ENDPOINT is unavailable.
 
     Args:
         memory_id: Parent memory UUID.
-        photo_docs: List of photo dicts with 'url', 'photo_id', 'caption' fields.
+        photo_docs: List of photo dicts with 'photo_id' and 'caption' fields.
     """
-    import httpx
-
     from ..services.amd_service import generate_embedding
 
     failed = 0
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        for photo in photo_docs:
-            photo_id: str = photo["photo_id"]
-            url: str = photo["url"]
-            caption: str = photo.get("caption", "")
+    for photo in photo_docs:
+        photo_id: str = photo["photo_id"]
+        caption: str = photo.get("caption", "")
 
-            try:
-                response = await client.get(url)
-                response.raise_for_status()
-                image_bytes = response.content
+        try:
+            # all-MiniLM-L6-v2 is text-only — pass empty bytes, use caption
+            embedding = await generate_embedding(b"", caption)
 
-                embedding = await generate_embedding(image_bytes, caption)
+            firebase_service.update_photo_embedding(
+                memory_id=memory_id,
+                photo_id=photo_id,
+                embedding=embedding,
+            )
+            logger.info(
+                "Embedded photo %s for memory %s.", photo_id, memory_id
+            )
 
-                firebase_service.update_photo_embedding(
-                    memory_id=memory_id,
-                    photo_id=photo_id,
-                    embedding=embedding,
-                )
-                logger.info(
-                    "Embedded photo %s for memory %s.", photo_id, memory_id
-                )
-
-            except Exception as exc:  # noqa: BLE001
-                failed += 1
-                logger.error(
-                    "Failed to embed photo %s for memory %s: %s",
-                    photo_id,
-                    memory_id,
-                    exc,
-                )
+        except Exception as exc:  # noqa: BLE001
+            failed += 1
+            logger.error(
+                "Failed to embed photo %s for memory %s: %s",
+                photo_id,
+                memory_id,
+                exc,
+            )
 
     # C2: Only mark "ready" when all embeddings succeeded; use "error" on partial/full failure.
     final_status = "ready" if failed == 0 else "error"

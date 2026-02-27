@@ -115,6 +115,7 @@ export interface MemoryResponse {
   created_at: string
   status: 'processing' | 'ready' | 'error'
   voice_id: string | null
+  agent_id: string | null
   embedding_ready: boolean
   photos: PhotoMeta[]
 }

@@ -9,7 +9,11 @@ import type { PhotoFile } from '@/types'
 
 const MAX_PHOTOS = 30
 const MAX_SIZE_BYTES = 10 * 1024 * 1024 // 10 MB
-const ACCEPTED_TYPES = { 'image/jpeg': ['.jpg', '.jpeg'], 'image/png': ['.png'] }
+const ACCEPTED_TYPES = {
+  'image/jpeg': ['.jpg', '.jpeg'],
+  'image/png': ['.png'],
+  'image/webp': ['.webp'],
+}
 
 // ============================================================
 // Sub-components
@@ -81,7 +85,7 @@ const PhotoPreview: React.FC<PhotoPreviewProps> = ({
           onFocus={() => setCaptionFocused(true)}
           onBlur={() => setCaptionFocused(false)}
           placeholder="Add a caption..."
-          maxLength={120}
+          maxLength={500}
           className={`w-full bg-transparent text-xs text-memory-text placeholder-memory-text-muted/60
                      border-b transition-colors duration-200 pb-1 outline-none
                      ${captionFocused ? 'border-memory-accent' : 'border-white/10'}`}
@@ -110,7 +114,7 @@ const DropZoneContent: React.FC<DropZoneContentProps> = ({
     return (
       <div className="flex flex-col items-center gap-3">
         <div className="text-4xl">x</div>
-        <p className="text-red-400 font-medium">Only JPEG and PNG files are allowed</p>
+        <p className="text-red-400 font-medium">Only JPEG, PNG and WebP files are allowed</p>
       </div>
     )
   }
@@ -163,7 +167,7 @@ const DropZoneContent: React.FC<DropZoneContentProps> = ({
         <div className="flex items-center gap-4 justify-center text-xs text-memory-text-muted">
           <span className="flex items-center gap-1">
             <span className="w-1.5 h-1.5 rounded-full bg-memory-accent/60 inline-block" />
-            JPEG &amp; PNG only
+            JPEG, PNG &amp; WebP
           </span>
           <span className="flex items-center gap-1">
             <span className="w-1.5 h-1.5 rounded-full bg-memory-accent/60 inline-block" />
@@ -247,7 +251,7 @@ export const PhotoUpload: React.FC<PhotoUploadProps> = ({
         return `"${file.name}" is too large (max 10 MB)`
       }
       if (err?.code === 'file-invalid-type') {
-        return `"${file.name}" is not a JPEG or PNG`
+        return `"${file.name}" is not a JPEG, PNG or WebP`
       }
       return `"${file.name}": ${err?.message ?? 'invalid file'}`
     })

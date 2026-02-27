@@ -40,7 +40,8 @@
       "Bash(npx tsc:*)",
       "Bash(cd /c/Users/ASUS/Desktop/memorybridge/frontend && npx vite build 2>&1)",
       "Bash(head:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(python:*)"
     ]
   }
 }

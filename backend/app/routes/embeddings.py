@@ -132,61 +132,54 @@ def _queue_batch_job(memory_id: str, photos: list[dict]) -> None:
 
 
 async def _run_batch(memory_id: str, photos: list[dict]) -> None:
-    """Download each photo, generate its AMD embedding, and persist it.
+    """Generate AMD text embeddings for each photo caption and persist them.
 
-    Uses httpx for async photo downloads and the amd_service for inference.
-    Falls back to CPU automatically via amd_service when AMD cloud is unavailable.
+    The all-MiniLM-L6-v2 model is text-only — image bytes are not downloaded.
+    Falls back to local CPU automatically when AMD_ENDPOINT is unavailable.
 
     Args:
         memory_id: Parent memory UUID.
-        photos: List of photo dicts (must have 'url', 'photo_id', 'caption').
+        photos: List of photo dicts (must have 'photo_id' and 'caption').
     """
-    import httpx
-
     from ..services.amd_service import generate_embedding
 
     failed = 0
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        for photo in photos:
-            photo_id: str = photo["photo_id"]
-            url: str = photo["url"]
-            caption: str = photo.get("caption", "")
+    for photo in photos:
+        photo_id: str = photo["photo_id"]
+        caption: str = photo.get("caption", "")
 
-            # Skip photos that already have an embedding
-            if photo.get("embedding") is not None:
-                logger.debug(
-                    "Skipping photo %s — embedding already present.", photo_id
-                )
-                continue
+        # Idempotency guard — skip photos already embedded
+        if photo.get("embedding") is not None:
+            logger.debug(
+                "Skipping photo %s — embedding already present.", photo_id
+            )
+            continue
 
-            try:
-                response = await client.get(url)
-                response.raise_for_status()
-                image_bytes = response.content
+        try:
+            # all-MiniLM-L6-v2 is text-only — pass empty bytes, use caption
+            embedding = await generate_embedding(b"", caption)
 
-                embedding = await generate_embedding(image_bytes, caption)
+            firebase_service.update_photo_embedding(
+                memory_id=memory_id,
+                photo_id=photo_id,
+                embedding=embedding,
+            )
+            logger.info(
+                "Embedded photo %s for memory %s (%d dims).",
+                photo_id,
+                memory_id,
+                len(embedding),
+            )
 
-                firebase_service.update_photo_embedding(
-                    memory_id=memory_id,
-                    photo_id=photo_id,
-                    embedding=embedding,
-                )
-                logger.info(
-                    "Embedded photo %s for memory %s (%d dims).",
-                    photo_id,
-                    memory_id,
-                    len(embedding),
-                )
-
-            except Exception as exc:  # noqa: BLE001
-                failed += 1
-                logger.error(
-                    "Failed to embed photo %s for memory %s: %s",
-                    photo_id,
-                    memory_id,
-                    exc,
-                )
+        except Exception as exc:  # noqa: BLE001
+            failed += 1
+            logger.error(
+                "Failed to embed photo %s for memory %s: %s",
+                photo_id,
+                memory_id,
+                exc,
+            )
 
     # C2: Only mark "ready" when all embeddings succeeded; use "error" on any failure.
     final_status = "ready" if failed == 0 else "error"

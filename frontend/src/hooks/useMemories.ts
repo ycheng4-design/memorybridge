@@ -16,6 +16,7 @@ interface MemoriesState {
   memoryStatus: FirestoreMemoryDoc['status'] | null
   embeddingReady: boolean
   photoCount: number
+  personName: string
 }
 
 interface UseMemoriesReturn extends MemoriesState {
@@ -69,6 +70,7 @@ export function useMemories(memoryId: string | null): UseMemoriesReturn {
     memoryStatus: null,
     embeddingReady: false,
     photoCount: 0,
+    personName: '',
   })
 
   // Use a refresh key to allow manual re-subscription
@@ -97,6 +99,7 @@ export function useMemories(memoryId: string | null): UseMemoriesReturn {
         memoryStatus: null,
         embeddingReady: false,
         photoCount: 0,
+        personName: '',
       })
       return
     }
@@ -134,6 +137,7 @@ export function useMemories(memoryId: string | null): UseMemoriesReturn {
           ...prev,
           memoryStatus: memDoc.status,
           embeddingReady: memDoc.embeddingReady,
+          personName: memDoc.personName,
         }))
       },
       (error: Error) => {
