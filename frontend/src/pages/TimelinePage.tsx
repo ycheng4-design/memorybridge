@@ -95,14 +95,11 @@ export const TimelinePage: React.FC = () => {
   const { id: memoryId } = useParams<{ id: string }>()
   const [activeMemory, setActiveMemory] = useState<Memory | null>(null)
 
-  const { photos, photoCount } = useMemories(memoryId ?? null)
+  const { photos, photoCount, personName, agentId } = useMemories(memoryId ?? null)
 
   if (!memoryId) {
     return <MissingIdFallback />
   }
-
-  // Derive person name from first available data (will update when data loads)
-  const personName = 'Your loved one'
 
   const handlePhotoSelect = (photo: PhotoMeta): void => {
     setActiveMemory({
@@ -158,6 +155,7 @@ export const TimelinePage: React.FC = () => {
           >
             <div className="lg:sticky lg:top-20 space-y-4">
               <VoiceWidget
+                agentId={agentId}
                 memoryId={memoryId}
                 personName={personName}
                 photos={photos}

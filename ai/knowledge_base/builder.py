@@ -76,6 +76,7 @@ ERA_LABELS: dict[str, str] = {
 # Canonical era ordering for document section sorting
 _ERA_ORDER: list[str] = [
     "Childhood (1940s-1960s)",
+    "Young Adult Years",
     "Family Years (1970s-1990s)",
     "Career & Later Life (2000s-2010s)",
     "Recent Memories (2020s)",

@@ -139,6 +139,13 @@ async def _post_with_retry(
         )
 
         if response.status_code != 429 or attempt >= _MAX_RETRIES:
+            if response.status_code >= 400:
+                logger.error(
+                    "[ElevenLabs %d] url=%s | body: %s",
+                    response.status_code,
+                    url,
+                    response.text[:1000],
+                )
             response.raise_for_status()
             return response
 
@@ -180,6 +187,13 @@ async def _patch_with_retry(
         )
 
         if response.status_code != 429 or attempt >= _MAX_RETRIES:
+            if response.status_code >= 400:
+                logger.error(
+                    "[ElevenLabs PATCH %d] url=%s | body: %s",
+                    response.status_code,
+                    url,
+                    response.text[:1000],
+                )
             response.raise_for_status()
             return response
 
@@ -226,7 +240,17 @@ async def create_voice_clone(
 
     async with httpx.AsyncClient(timeout=120.0) as client:
         with open(audio_file_path, "rb") as audio_file:
-            mime = "audio/wav" if audio_file_path.lower().endswith(".wav") else "audio/mpeg"
+            _p = audio_file_path.lower()
+            if _p.endswith(".wav"):
+                mime = "audio/wav"
+            elif _p.endswith(".webm"):
+                mime = "audio/webm"
+            elif _p.endswith(".ogg"):
+                mime = "audio/ogg"
+            elif _p.endswith(".m4a"):
+                mime = "audio/mp4"
+            else:
+                mime = "audio/mpeg"
             filename = os.path.basename(audio_file_path)
 
             response = await _post_with_retry(
@@ -274,14 +298,11 @@ async def upload_knowledge_base_document(
 
     logger.info("Uploading knowledge base document '%s' (%d chars).", name, len(content_str))
 
-    encoded = content_str.encode("utf-8")
-
     async with httpx.AsyncClient(timeout=60.0) as client:
         response = await _post_with_retry(
             client,
-            f"{_BASE_URL}/convai/knowledge-base/document",
-            data={"name": name},
-            files={"file": (f"{name}.md", encoded, "text/markdown")},
+            f"{_BASE_URL}/convai/knowledge-base/text",
+            json={"text": content_str, "name": name},
         )
 
     data = response.json()
@@ -311,6 +332,15 @@ async def create_conversational_agent(
     Raises:
         httpx.HTTPStatusError: If the API returns an error.
     """
+    if not voice_id:
+        raise ValueError(
+            f"voice_id is empty — voice cloning failed upstream for {person_name!r}"
+        )
+    if not kb_id:
+        raise ValueError(
+            f"kb_id is empty — knowledge base upload failed upstream for {person_name!r}"
+        )
+
     prompt = system_prompt or _SYSTEM_PROMPT_TEMPLATE.format(person_name=person_name)
 
     payload: dict = {
@@ -319,9 +349,11 @@ async def create_conversational_agent(
             "agent": {
                 "prompt": {
                     "prompt": prompt,
+                    "llm": "gemini-2.0-flash",
                     "knowledge_base": [
                         {
                             "type": "file",
+                            "name": f"{person_name} memories",
                             "id": kb_id,
                         }
                     ],
@@ -334,13 +366,7 @@ async def create_conversational_agent(
             },
             "tts": {
                 "voice_id": voice_id,
-                "model_id": "eleven_turbo_v2_5",
-                "stability": 0.75,
-                "similarity_boost": 0.85,
-            },
-            "asr": {
-                "quality": "high",
-                "user_input_audio_format": "pcm_16000",
+                "model_id": "eleven_turbo_v2",
             },
         },
     }

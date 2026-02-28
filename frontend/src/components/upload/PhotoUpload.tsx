@@ -26,12 +26,12 @@ interface PhotoPreviewProps {
   onCaptionChange: (id: string, caption: string) => void
 }
 
-const PhotoPreview: React.FC<PhotoPreviewProps> = ({
+const PhotoPreview = React.forwardRef<HTMLDivElement, PhotoPreviewProps>(({
   photo,
   index,
   onRemove,
   onCaptionChange,
-}) => {
+}, _ref) => {
   const [captionFocused, setCaptionFocused] = useState(false)
 
   return (
@@ -93,7 +93,8 @@ const PhotoPreview: React.FC<PhotoPreviewProps> = ({
       </div>
     </motion.div>
   )
-}
+})
+PhotoPreview.displayName = 'PhotoPreview'
 
 // ============================================================
 // Drop Zone UI

@@ -17,6 +17,7 @@ interface MemoriesState {
   embeddingReady: boolean
   photoCount: number
   personName: string
+  agentId: string | undefined
 }
 
 interface UseMemoriesReturn extends MemoriesState {
@@ -71,6 +72,7 @@ export function useMemories(memoryId: string | null): UseMemoriesReturn {
     embeddingReady: false,
     photoCount: 0,
     personName: '',
+    agentId: undefined,
   })
 
   // Use a refresh key to allow manual re-subscription
@@ -100,6 +102,7 @@ export function useMemories(memoryId: string | null): UseMemoriesReturn {
         embeddingReady: false,
         photoCount: 0,
         personName: '',
+        agentId: undefined,
       })
       return
     }
@@ -138,6 +141,7 @@ export function useMemories(memoryId: string | null): UseMemoriesReturn {
           memoryStatus: memDoc.status,
           embeddingReady: memDoc.embeddingReady,
           personName: memDoc.personName,
+          agentId: memDoc.agentId,
         }))
       },
       (error: Error) => {

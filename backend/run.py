@@ -5,8 +5,14 @@ Loads environment variables, creates the app via factory, and runs on port 5000.
 
 import logging
 import os
+import sys
 
 from dotenv import load_dotenv
+
+# Add the project root (one level above backend/) to sys.path so that
+# `import ai` resolves to memorybridge/ai/ regardless of working directory.
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
 
 load_dotenv()
 

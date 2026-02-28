@@ -201,6 +201,7 @@ def get_memory_from_firestore(memory_id: str) -> Optional[dict]:
         "created_at": data.get("created_at").isoformat() if data.get("created_at") else "",
         "status": data.get("status", "processing"),
         "voice_id": data.get("voice_id"),
+        "kb_id": data.get("kb_id"),
         "agent_id": data.get("agent_id"),
         "embedding_ready": all_embedded,
         "photos": photos,

@@ -45,7 +45,11 @@
       "WebFetch(domain:raw.githubusercontent.com)",
       "WebFetch(domain:registry.npmjs.org)",
       "Bash(ls:*)",
-      "Bash(npm run:*)"
+      "Bash(npm run:*)",
+      "WebFetch(domain:commons.wikimedia.org)",
+      "WebFetch(domain:unsplash.com)",
+      "WebFetch(domain:pixabay.com)",
+      "WebFetch(domain:en.wikipedia.org)"
     ]
   }
 }

@@ -110,18 +110,6 @@ function App() {
           }
         />
 
-        {/* Legacy /memory/:memoryId route — still used by SpatialMemoryRoom internally */}
-        <Route
-          path={`${base}/memory/:memoryId`}
-          element={
-            <PageTransition>
-              <Suspense fallback={<SpatialLoadingFallback />}>
-                <SpatialMemoryRoom />
-              </Suspense>
-            </PageTransition>
-          }
-        />
-
         {/* Catch-all */}
         <Route
           path="*"

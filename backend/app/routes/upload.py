@@ -364,6 +364,10 @@ def _queue_elevenlabs_provisioning(
             logger.exception(
                 "ElevenLabs provisioning failed for memory %s: %s", memory_id, exc
             )
+            try:
+                firebase_service.update_memory_status(memory_id, "error")
+            except Exception:
+                pass
         finally:
             if tmp_path and os.path.exists(tmp_path):
                 try:
@@ -395,6 +399,17 @@ async def _run_elevenlabs_provisioning(
         update_memory_agent_id,
     )
     from ai.knowledge_base.builder import build_from_firestore
+
+    # Idempotency guard: skip full pipeline if agent_id already set.
+    # Prevents duplicate ElevenLabs resources on double-submit or retry.
+    existing = firebase_service.get_memory_from_firestore(memory_id)
+    if existing and existing.get("agent_id"):
+        logger.info(
+            "[EL Provision] Memory %s already provisioned (agent_id=%s). Skipping.",
+            memory_id,
+            existing["agent_id"],
+        )
+        return
 
     # Step 1 — Voice clone
     logger.info("[EL Provision] Step 1: Creating voice clone for memory %s.", memory_id)
@@ -517,18 +532,72 @@ async def _run_embeddings(memory_id: str, photo_docs: List[dict]) -> None:
                 exc,
             )
 
-    # C2: Only mark "ready" when all embeddings succeeded; use "error" on partial/full failure.
-    final_status = "ready" if failed == 0 else "error"
-    firebase_service.update_memory_status(memory_id, final_status)
+    # Embedding failures are non-fatal: the EL provisioning thread owns status.
+    # Never write "error" here — it would race with the EL thread's "ready"
+    # and leave the memory broken even when voice + agent succeeded.
     logger.info(
-        "Memory %s embedding job complete — %d failed — status set to '%s'.",
-        memory_id, failed, final_status,
+        "Memory %s embedding job complete — %d failed.",
+        memory_id, failed,
     )
 
 
 # ------------------------------------------------------------------ #
 # Utility                                                              #
 # ------------------------------------------------------------------ #
+
+
+@upload_bp.post("/retry-agent/<memory_id>")
+def retry_agent(memory_id: str) -> Tuple[object, int]:
+    """Retry ElevenLabs agent creation for a memory that has voice_id + kb_id but no agent_id.
+
+    Useful after a provisioning failure where the voice clone and knowledge base
+    already succeeded but the final agent creation step errored out.
+
+    Args:
+        memory_id: UUID of the existing Firestore memory document.
+
+    Returns:
+        200: {"memory_id": str, "status": "processing"}
+        400: {"error": str} — if voice_id or kb_id is not yet stored
+        404: {"error": str} — if memory_id does not exist
+    """
+    memory = firebase_service.get_memory_from_firestore(memory_id)
+    if not memory:
+        return jsonify({"error": f"Memory {memory_id} not found"}), 404
+
+    voice_id = memory.get("voice_id")
+    kb_id = memory.get("kb_id")
+    person_name = memory.get("person_name", "Unknown")
+
+    if not voice_id:
+        return jsonify({"error": "voice_id not set — run full upload first"}), 400
+    if not kb_id:
+        return jsonify({"error": "kb_id not set — run full upload first"}), 400
+
+    def _worker() -> None:
+        import asyncio
+        from ..services import elevenlabs_service
+        from ..services.firebase_service import update_memory_agent_id
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            agent_id = loop.run_until_complete(
+                elevenlabs_service.create_conversational_agent(voice_id, kb_id, person_name)
+            )
+            update_memory_agent_id(memory_id, agent_id)
+            firebase_service.update_memory_status(memory_id, "ready")
+            logger.info("[retry-agent] agent_id=%s created for memory %s.", agent_id, memory_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("[retry-agent] Failed for memory %s: %s", memory_id, exc)
+            firebase_service.update_memory_status(memory_id, "error")
+        finally:
+            loop.close()
+
+    thread = threading.Thread(target=_worker, daemon=True, name=f"retry-agent-{memory_id[:8]}")
+    thread.start()
+    logger.info("Queued retry-agent thread for memory %s.", memory_id)
+    return jsonify({"memory_id": memory_id, "status": "processing"}), 200
 
 
 def _infer_era(index: int, total: int) -> str:
